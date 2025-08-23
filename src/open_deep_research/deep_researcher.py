@@ -1,6 +1,7 @@
 """Main LangGraph implementation for the Deep Research agent."""
 
 import asyncio
+import json
 from typing import Literal
 
 from langchain.chat_models import init_chat_model
@@ -43,6 +44,7 @@ from open_deep_research.utils import (
     anthropic_websearch_called,
     get_all_tools,
     get_api_key_for_model,
+    get_chat_model,
     get_model_token_limit,
     get_notes_from_tool_calls,
     get_today_str,
@@ -50,12 +52,13 @@ from open_deep_research.utils import (
     openai_websearch_called,
     remove_up_to_last_ai_message,
     think_tool,
+    tavily_search,
+    get_model_kwargs_for_model,
+    parse_json_response_content,
+    get_openrouter_chat_model_params,
 )
 
-# Initialize a configurable model that we will use throughout the agent
-configurable_model = init_chat_model(
-    configurable_fields=("model", "max_tokens", "api_key"),
-)
+
 
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command[Literal["write_research_brief", "__end__"]]:
     """Analyze user messages and ask clarifying questions if the research scope is unclear.
@@ -78,19 +81,9 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     
     # Step 2: Prepare the model for structured clarification analysis
     messages = state["messages"]
-    model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
-    
-    # Configure model with structured output and retry logic
     clarification_model = (
-        configurable_model
-        .with_structured_output(ClarifyWithUser)
+        get_chat_model(configurable.research_model, config, max_tokens=configurable.research_model_max_tokens)
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(model_config)
     )
     
     # Step 3: Analyze whether clarification is needed
@@ -98,7 +91,20 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
         messages=get_buffer_string(messages), 
         date=get_today_str()
     )
-    response = await clarification_model.ainvoke([HumanMessage(content=prompt_content)])
+    
+    # Instruct the model to output JSON
+    system_message = SystemMessage(content="You are a helpful assistant that outputs ONLY JSON. Your output MUST conform to the ClarifyWithUser schema: {\"need_clarification\": bool, \"question\": str, \"verification\": str}. Do NOT include any other text or conversational elements.")
+    
+    response = await clarification_model.ainvoke([system_message, HumanMessage(content=prompt_content)])
+    
+    # Parse the JSON response
+    response_data = parse_json_response_content(response.content)
+    if response_data is None:
+        # Handle the case where JSON parsing failed.
+        # For now, I'll raise an error, but a more robust solution might involve retrying or
+        # providing a default ClarifyWithUser object.
+        raise ValueError("Failed to parse JSON response for ClarifyWithUser.")
+    response = ClarifyWithUser(**response_data)
     
     # Step 4: Route based on clarification analysis
     if response.need_clarification:
@@ -131,19 +137,9 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     """
     # Step 1: Set up the research model for structured output
     configurable = Configuration.from_runnable_config(config)
-    research_model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
-    
-    # Configure model for structured research question generation
     research_model = (
-        configurable_model
-        .with_structured_output(ResearchQuestion)
+        get_chat_model(configurable.research_model, config, max_tokens=configurable.research_model_max_tokens)
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
     )
     
     # Step 2: Generate structured research brief from user messages
@@ -151,7 +147,17 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
         messages=get_buffer_string(state.get("messages", [])),
         date=get_today_str()
     )
-    response = await research_model.ainvoke([HumanMessage(content=prompt_content)])
+    
+    # Instruct the model to output JSON
+    system_message = SystemMessage(content="You are a helpful assistant that outputs ONLY JSON. Your output MUST conform to the ResearchQuestion schema: {\"research_brief\": str}. Do NOT include any other text or conversational elements.")
+    
+    response = await research_model.ainvoke([system_message, HumanMessage(content=prompt_content)])
+    
+    # Parse the JSON response
+    response_data = parse_json_response_content(response.content)
+    if response_data is None:
+        raise ValueError("Failed to parse JSON response for ResearchQuestion.")
+    response = ResearchQuestion(**response_data)
     
     # Step 3: Initialize supervisor with research brief and instructions
     supervisor_system_prompt = lead_researcher_prompt.format(
@@ -189,29 +195,104 @@ async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[
     Returns:
         Command to proceed to supervisor_tools for tool execution
     """
-    # Step 1: Configure the supervisor model with available tools
+    # Step 1: Configure the supervisor model
     configurable = Configuration.from_runnable_config(config)
-    research_model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
-    
-    # Available tools: research delegation, completion signaling, and strategic thinking
-    lead_researcher_tools = [ConductResearch, ResearchComplete, think_tool]
-    
-    # Configure model with tools, retry logic, and model settings
     research_model = (
-        configurable_model
-        .bind_tools(lead_researcher_tools)
+        get_chat_model(configurable.research_model, config, max_tokens=configurable.research_model_max_tokens)
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
     )
+    
+    # Define tool schemas for the model to understand
+    tool_schemas = """
+[
+    {
+        "name": "ConductResearch",
+        "description": "Call this tool to conduct research on a specific topic.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "research_topic": {
+                    "type": "string",
+                    "description": "The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph)."
+                }
+            },
+            "required": ["research_topic"]
+        }
+    },
+    {
+        "name": "ResearchComplete",
+        "description": "Call this tool to indicate that the research is complete.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "think_tool",
+        "description": "Strategic reflection tool for research planning",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reflection": {
+                    "type": "string",
+                    "description": "Your detailed reflection on research progress, findings, gaps, and next steps"
+                }
+            },
+            "required": ["reflection"]
+        }
+    }
+]
+"""
     
     # Step 2: Generate supervisor response based on current context
     supervisor_messages = state.get("supervisor_messages", [])
-    response = await research_model.ainvoke(supervisor_messages)
+    
+    # Instruct the model to output JSON with tool calls
+    example_json = {
+        "tool_calls": [
+            {
+                "id": "call_12345", # Example ID
+                "name": "tool_name",
+                "args": {"arg1": "value1"}
+            }
+        ]
+    }
+
+    system_message = SystemMessage(
+        content=f"""
+    You are a helpful assistant that outputs ONLY JSON. Your output MUST contain a 'tool_calls' array if you want to call tools, or a 'content' field if you want to respond with text. Do NOT include any other text or conversational elements. Here are the tools you can use:
+
+    {tool_schemas}
+
+    If you want to call a tool, respond with a JSON object containing a 'tool_calls' array. Each object in 'tool_calls' should have 'id', 'name' and 'args' keys. For example: {json.dumps(example_json)}. If you want to respond with text, just provide the text.
+    """
+    )
+
+    response = await research_model.ainvoke([system_message] + supervisor_messages)
+    
+    # Parse the JSON response and extract tool calls
+    # This part will be complex and will require a helper function
+    # For now, I'll assume response.content contains the JSON and parse it.
+    # If response.content is not JSON, it means the model just responded with text.
+    response_data = parse_json_response_content(response.content)  
+    if response_data is not None:  
+        tool_calls_data = response_data.get("tool_calls", [])  
+        content = response_data.get("content", "")  
+          
+        # Convert JSON tool calls to proper LangChain tool call format  
+        formatted_tool_calls = []  
+        for i, tool_call in enumerate(tool_calls_data):  
+            formatted_tool_call = {  
+                "id": tool_call.get("id", f"call_{i}_{tool_call['name']}"),  # Ensure ID exists  
+                "name": tool_call["name"],  
+                "args": tool_call["args"]  
+            }  
+            formatted_tool_calls.append(formatted_tool_call)  
+          
+        response = AIMessage(content=content, tool_calls=formatted_tool_calls)  
+    else:  
+        # If JSON parsing failed, assume it's a regular text response  
+        pass # response is already an AIMessage with content
     
     # Step 3: Update state and proceed to tool execution
     return Command(
@@ -381,39 +462,97 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     researcher_messages = state.get("researcher_messages", [])
     
     # Get all available research tools (search, MCP, think_tool)
-    tools = await get_all_tools(config)
-    if len(tools) == 0:
-        raise ValueError(
-            "No tools found to conduct research: Please configure either your "
-            "search API or add MCP tools to your configuration."
-        )
+    # tools = await get_all_tools(config) # We will manually handle tools
+    # if len(tools) == 0:
+    #     raise ValueError(
+    #         "No tools found to conduct research: Please configure either your "
+    #         "search API or add MCP tools to your configuration."
+    #     )
     
-    # Step 2: Configure the researcher model with tools
-    research_model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
+    # Step 2: Configure the researcher model
+    research_model = (
+        get_chat_model(configurable.research_model, config, max_tokens=configurable.research_model_max_tokens)
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+    )
+    
+    # Define tool schemas for the model to understand
+    tool_schemas = """
+[
+    {
+        "name": "tavily_search",
+        "description": "A search engine optimized for comprehensive, accurate, and trusted results. Useful for when you need to answer questions about current events.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of search queries to execute"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return per query",
+                    "default": 5
+                },
+                "topic": {
+                    "type": "string",
+                    "enum": ["general", "news", "finance"],
+                    "description": "Topic filter for search results (general, news, or finance)",
+                    "default": "general"
+                }
+            },
+            "required": ["queries"]
+        }
+    },
+    {
+        "name": "think_tool",
+        "description": "Strategic reflection tool for research planning",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reflection": {
+                    "type": "string",
+                    "description": "Your detailed reflection on research progress, findings, gaps, and next steps"
+                }
+            },
+            "required": ["reflection"]
+        }
     }
+]
+"""
     
-    # Prepare system prompt with MCP context if available
+    # Step 3: Generate researcher response with system context
+    # Instruct the model to output JSON with tool calls
     researcher_prompt = research_system_prompt.format(
         mcp_prompt=configurable.mcp_prompt or "", 
         date=get_today_str()
-    )
-    
-    # Configure model with tools, retry logic, and settings
-    research_model = (
-        configurable_model
-        .bind_tools(tools)
-        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
-    )
-    
-    # Step 3: Generate researcher response with system context
+    ) 
+
     messages = [SystemMessage(content=researcher_prompt)] + researcher_messages
     response = await research_model.ainvoke(messages)
     
+    # Parse the JSON response and extract tool calls
+    response_data = parse_json_response_content(response.content)    
+    if response_data is not None:    
+        tool_calls_data = response_data.get("tool_calls", [])    
+        content = response_data.get("content", "")    
+            
+        # Convert JSON tool calls to proper LangChain tool call format    
+        formatted_tool_calls = []    
+        for i, tool_call in enumerate(tool_calls_data):    
+            formatted_tool_call = {    
+                "id": tool_call.get("id", f"call_{i}_{tool_call['name']}"),  # Ensure ID exists    
+                "name": tool_call["name"],    
+                "args": tool_call["args"]    
+            }    
+            formatted_tool_calls.append(formatted_tool_call)    
+            
+        response = AIMessage(content=content, tool_calls=formatted_tool_calls)    
+    else:    
+        pass # response is already an AIMessage with content
+ 
     # Step 4: Update state and proceed to tool execution
     return Command(
         goto="researcher_tools",
@@ -464,10 +603,12 @@ async def researcher_tools(state: ResearcherState, config: RunnableConfig) -> Co
         return Command(goto="compress_research")
     
     # Step 2: Handle other tool calls (search, MCP tools, etc.)
-    tools = await get_all_tools(config)
+    # Manually define tools_by_name
     tools_by_name = {
-        tool.name if hasattr(tool, "name") else tool.get("name", "web_search"): tool 
-        for tool in tools
+        "tavily_search": tavily_search,
+        "think_tool": think_tool,
+        # MCP tools will need to be handled separately if they are still desired
+        # For now, I'm focusing on the core issue.
     }
     
     # Execute all tool calls in parallel
@@ -524,12 +665,7 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
     """
     # Step 1: Configure the compression model
     configurable = Configuration.from_runnable_config(config)
-    synthesizer_model = configurable_model.with_config({
-        "model": configurable.compression_model,
-        "max_tokens": configurable.compression_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.compression_model, config),
-        "tags": ["langsmith:nostream"]
-    })
+    synthesizer_model = get_chat_model(configurable.compression_model, config, max_tokens=configurable.compression_model_max_tokens)
     
     # Step 2: Prepare messages for compression
     researcher_messages = state.get("researcher_messages", [])
@@ -624,12 +760,7 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
     
     # Step 2: Configure the final report generation model
     configurable = Configuration.from_runnable_config(config)
-    writer_model_config = {
-        "model": configurable.final_report_model,
-        "max_tokens": configurable.final_report_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.final_report_model, config),
-        "tags": ["langsmith:nostream"]
-    }
+    writer_model = get_chat_model(configurable.final_report_model, config, max_tokens=configurable.final_report_model_max_tokens)
     
     # Step 3: Attempt report generation with token limit retry logic
     max_retries = 3
@@ -647,7 +778,7 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
             )
             
             # Generate the final report
-            final_report = await configurable_model.with_config(writer_model_config).ainvoke([
+            final_report = await writer_model.ainvoke([
                 HumanMessage(content=final_report_prompt)
             ])
             

@@ -1,6 +1,7 @@
 """Utility functions and helpers for the Deep Research agent."""
 
 import asyncio
+import json
 import logging
 import os
 import warnings
@@ -32,6 +33,26 @@ from tavily import AsyncTavilyClient
 from open_deep_research.configuration import Configuration, SearchAPI
 from open_deep_research.prompts import summarize_webpage_prompt
 from open_deep_research.state import ResearchComplete, Summary
+
+from open_deep_research.llms import ChatOpenRouter
+
+
+def get_chat_model(model_name: str, config: RunnableConfig, **kwargs):  
+    """Get a chat model instance."""  
+    model_name = model_name.lower()  
+    if model_name.startswith("openrouter:"):  
+        actual_model = model_name.split(":")[1]  
+        return ChatOpenRouter(  
+            model_name=actual_model,  
+            api_key=get_api_key_for_model(model_name, config),  
+            **kwargs,  
+        )  
+    return init_chat_model(  
+        model=model_name,  
+        api_key=get_api_key_for_model(model_name, config),  
+        **kwargs  
+    )
+
 
 ##########################
 # Tavily Search Tool Utils
@@ -88,7 +109,7 @@ async def tavily_search(
         max_tokens=configurable.summarization_model_max_tokens,
         api_key=model_api_key,
         tags=["langsmith:nostream"]
-    ).with_structured_output(Summary).with_retry(
+    ).with_retry(
         stop_after_attempt=configurable.max_structured_output_retries
     )
     
@@ -190,10 +211,16 @@ async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
         )
         
         # Execute summarization with timeout to prevent hanging
-        summary = await asyncio.wait_for(
+        response = await asyncio.wait_for(
             model.ainvoke([HumanMessage(content=prompt_content)]),
             timeout=60.0  # 60 second timeout for summarization
         )
+        
+        # Parse the JSON response
+        summary_data = parse_json_response_content(response.content)
+        if summary_data is None:
+            raise ValueError("Failed to parse JSON response for Summary.")
+        summary = Summary(**summary_data)
         
         # Format the summary with structured sections
         formatted_summary = (
@@ -826,6 +853,7 @@ MODEL_TOKEN_LIMITS = {
     "bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0": 200000,
     "bedrock:us.anthropic.claude-opus-4-20250514-v1:0": 200000,
     "anthropic.claude-opus-4-1-20250805-v1:0": 200000,
+    "openrouter:deepseek/deepseek-chat-v3-0324:free": 32768,
 }
 
 def get_model_token_limit(model_string):
@@ -889,6 +917,25 @@ def get_config_value(value):
     else:
         return value.value
 
+def parse_json_response_content(content: str) -> Optional[Dict[str, Any]]:
+    """
+    Parses a string content as JSON, handling potential markdown code blocks.
+    Returns the parsed dictionary or None if parsing fails.
+    """
+    json_string = content.strip()
+    
+    # Attempt to strip markdown code block if present
+    if json_string.startswith("```json"):
+        json_string = json_string[len("```json"):].strip()
+    if json_string.endswith("```"):
+        json_string = json_string[:-len("```")].strip()
+        
+    try:
+        return json.loads(json_string)
+    except json.JSONDecodeError as e:
+        logging.error(f"JSONDecodeError: Could not parse content as JSON. Error: {e}. Content: '{content}'")
+        return None
+
 def get_api_key_for_model(model_name: str, config: RunnableConfig):
     """Get API key for a specific model from environment or config."""
     should_get_from_config = os.getenv("GET_API_KEYS_FROM_CONFIG", "false")
@@ -903,6 +950,8 @@ def get_api_key_for_model(model_name: str, config: RunnableConfig):
             return api_keys.get("ANTHROPIC_API_KEY")
         elif model_name.startswith("google"):
             return api_keys.get("GOOGLE_API_KEY")
+        elif model_name.startswith("openrouter:"):
+            return api_keys.get("OPENROUTER_API_KEY")
         return None
     else:
         if model_name.startswith("openai:"): 
@@ -911,6 +960,8 @@ def get_api_key_for_model(model_name: str, config: RunnableConfig):
             return os.getenv("ANTHROPIC_API_KEY")
         elif model_name.startswith("google"):
             return os.getenv("GOOGLE_API_KEY")
+        elif model_name.startswith("openrouter:"):
+            return os.getenv("OPENROUTER_API_KEY")
         return None
 
 def get_tavily_api_key(config: RunnableConfig):
@@ -923,3 +974,29 @@ def get_tavily_api_key(config: RunnableConfig):
         return api_keys.get("TAVILY_API_KEY")
     else:
         return os.getenv("TAVILY_API_KEY")
+
+def get_model_kwargs_for_model(model_name: str, config: RunnableConfig):
+    """Get model kwargs for a specific model from environment or config."""
+    model_name = model_name.lower()
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    if model_name.startswith("openrouter:"):
+        return {
+            "headers": {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            }
+        }
+    return {}
+
+
+
+def get_openrouter_chat_model_params(model_name: str):
+    """Get model params for OpenRouter models."""
+    model_name = model_name.lower()
+    if model_name.startswith("openrouter:"):
+        return {
+            "model_name": model_name.split(":")[1],
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_provider": "openai",
+        }
+    return {"model_name": model_name}
