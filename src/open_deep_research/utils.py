@@ -83,15 +83,15 @@ async def tavily_search(
     
     # Initialize summarization model with retry logic
     model_api_key = get_api_key_for_model(configurable.summarization_model, config)
-    summarization_model = init_chat_model(
-        model=configurable.summarization_model,
-        max_tokens=configurable.summarization_model_max_tokens,
-        api_key=model_api_key,
-        tags=["langsmith:nostream"]
-    ).with_structured_output(Summary).with_retry(
-        stop_after_attempt=configurable.max_structured_output_retries
+    summarization_model = init_openrouter_model(  
+        configurable.summarization_model,  
+        max_tokens=configurable.summarization_model_max_tokens,  
+        api_key=model_api_key,  
+        tags=["langsmith:nostream"]  
+    ).with_structured_output(Summary).with_retry(  
+        stop_after_attempt=configurable.max_structured_output_retries  
     )
-    
+ 
     # Step 4: Create summarization tasks (skip empty content)
     async def noop():
         """No-op function for results without raw content."""
@@ -889,28 +889,32 @@ def get_config_value(value):
     else:
         return value.value
 
-def get_api_key_for_model(model_name: str, config: RunnableConfig):
-    """Get API key for a specific model from environment or config."""
-    should_get_from_config = os.getenv("GET_API_KEYS_FROM_CONFIG", "false")
-    model_name = model_name.lower()
-    if should_get_from_config.lower() == "true":
-        api_keys = config.get("configurable", {}).get("apiKeys", {})
-        if not api_keys:
-            return None
-        if model_name.startswith("openai:"):
-            return api_keys.get("OPENAI_API_KEY")
-        elif model_name.startswith("anthropic:"):
-            return api_keys.get("ANTHROPIC_API_KEY")
-        elif model_name.startswith("google"):
-            return api_keys.get("GOOGLE_API_KEY")
-        return None
-    else:
-        if model_name.startswith("openai:"): 
-            return os.getenv("OPENAI_API_KEY")
-        elif model_name.startswith("anthropic:"):
-            return os.getenv("ANTHROPIC_API_KEY")
-        elif model_name.startswith("google"):
-            return os.getenv("GOOGLE_API_KEY")
+def get_api_key_for_model(model_name: str, config: RunnableConfig):  
+    """Get API key for a specific model from environment or config."""  
+    should_get_from_config = os.getenv("GET_API_KEYS_FROM_CONFIG", "false")  
+    model_name = model_name.lower()  
+    if should_get_from_config.lower() == "true":  
+        api_keys = config.get("configurable", {}).get("apiKeys", {})  
+        if not api_keys:  
+            return None  
+        if model_name.startswith("openai:"):  
+            return api_keys.get("OPENAI_API_KEY")  
+        elif model_name.startswith("anthropic:"):  
+            return api_keys.get("ANTHROPIC_API_KEY")  
+        elif model_name.startswith("google"):  
+            return api_keys.get("GOOGLE_API_KEY")  
+        elif model_name.startswith("openrouter:") or "openrouter" in model_name:  
+            return api_keys.get("OPENROUTER_API_KEY")  
+        return None  
+    else:  
+        if model_name.startswith("openai:"):   
+            return os.getenv("OPENAI_API_KEY")  
+        elif model_name.startswith("anthropic:"):  
+            return os.getenv("ANTHROPIC_API_KEY")  
+        elif model_name.startswith("google"):  
+            return os.getenv("GOOGLE_API_KEY")  
+        elif model_name.startswith("openrouter:") or "openrouter" in model_name:  
+            return os.getenv("OPENROUTER_API_KEY")  
         return None
 
 def get_tavily_api_key(config: RunnableConfig):
@@ -923,3 +927,63 @@ def get_tavily_api_key(config: RunnableConfig):
         return api_keys.get("TAVILY_API_KEY")
     else:
         return os.getenv("TAVILY_API_KEY")
+
+def init_openrouter_model(model: str, **kwargs):        
+    """Initialize a chat model with OpenRouter configuration."""        
+    # Debug: Print what we're receiving    
+    print(f"DEBUG: model={model}")    
+    print(f"DEBUG: kwargs keys={list(kwargs.keys())}")    
+        
+    if "openrouter" in model.lower():        
+        actual_model = model.replace("openrouter:", "")        
+        print(f"DEBUG: Extracted actual model: {actual_model}")  
+            
+        # Remove 'model' from kwargs if it exists to avoid conflict      
+        if 'model' in kwargs:    
+            print(f"DEBUG: Removing duplicate model key: {kwargs['model']}")    
+        kwargs.pop('model', None)      
+          
+        print(f"DEBUG: About to call init_chat_model with:")  
+        print(f"  - model: {actual_model}")  
+        print(f"  - model_provider: openai")  
+        print(f"  - base_url: https://openrouter.ai/api/v1")  
+        print(f"  - kwargs: {kwargs}")  
+          
+        try:  
+            result = init_chat_model(        
+                model=actual_model,    
+                model_provider="openai",    
+                base_url="https://openrouter.ai/api/v1",        
+                **kwargs        
+            )  
+            print(f"DEBUG: init_chat_model completed successfully")  
+            print(f"DEBUG: Returned model type: {type(result)}")  
+            return result  
+        except Exception as e:  
+            print(f"DEBUG: init_chat_model failed with error: {str(e)}")  
+            print(f"DEBUG: Error type: {type(e).__name__}")  
+            raise  
+                
+    else:        
+        print(f"DEBUG: Non-OpenRouter model, using standard init_chat_model")  
+        try:  
+            result = init_chat_model(model=model, **kwargs)  
+            print(f"DEBUG: Standard init_chat_model completed successfully")  
+            return result  
+        except Exception as e:  
+            print(f"DEBUG: Standard init_chat_model failed with error: {str(e)}")  
+            raise
+
+def init_google_model(model: str, **kwargs):  
+    """Initialize a chat model with Google AI Studio configuration."""  
+    if "google:" in model.lower():  
+        actual_model = model.replace("google:", "")  
+        kwargs.pop('model', None)  # Remove duplicate model key  
+          
+        return init_chat_model(  
+            model=actual_model,  
+            model_provider="google_genai",  
+            **kwargs  
+        )  
+    else:  
+        return init_chat_model(model=model, **kwargs)

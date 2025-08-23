@@ -50,6 +50,8 @@ from open_deep_research.utils import (
     openai_websearch_called,
     remove_up_to_last_ai_message,
     think_tool,
+    init_openrouter_model,
+    init_google_model,
 )
 
 # Initialize a configurable model that we will use throughout the agent
@@ -79,20 +81,17 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     # Step 2: Prepare the model for structured clarification analysis
     messages = state["messages"]
     model_config = {
-        "model": configurable.research_model,
         "max_tokens": configurable.research_model_max_tokens,
         "api_key": get_api_key_for_model(configurable.research_model, config),
         "tags": ["langsmith:nostream"]
     }
     
     # Configure model with structured output and retry logic
-    clarification_model = (
-        configurable_model
-        .with_structured_output(ClarifyWithUser)
-        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(model_config)
-    )
-    
+    clarification_model = (  
+        init_google_model(configurable.research_model, **model_config)  
+        .with_structured_output(ClarifyWithUser)  
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)  
+    )    
     # Step 3: Analyze whether clarification is needed
     prompt_content = clarify_with_user_instructions.format(
         messages=get_buffer_string(messages), 
@@ -132,20 +131,18 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     # Step 1: Set up the research model for structured output
     configurable = Configuration.from_runnable_config(config)
     research_model_config = {
-        "model": configurable.research_model,
         "max_tokens": configurable.research_model_max_tokens,
         "api_key": get_api_key_for_model(configurable.research_model, config),
         "tags": ["langsmith:nostream"]
     }
     
     # Configure model for structured research question generation
-    research_model = (
-        configurable_model
-        .with_structured_output(ResearchQuestion)
-        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
-    )
-    
+    research_model = (  
+        init_google_model(configurable.research_model, **research_model_config)  
+        .with_structured_output(ResearchQuestion)  
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)  
+    ) 
+
     # Step 2: Generate structured research brief from user messages
     prompt_content = transform_messages_into_research_topic_prompt.format(
         messages=get_buffer_string(state.get("messages", [])),
@@ -192,7 +189,6 @@ async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[
     # Step 1: Configure the supervisor model with available tools
     configurable = Configuration.from_runnable_config(config)
     research_model_config = {
-        "model": configurable.research_model,
         "max_tokens": configurable.research_model_max_tokens,
         "api_key": get_api_key_for_model(configurable.research_model, config),
         "tags": ["langsmith:nostream"]
@@ -202,13 +198,12 @@ async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[
     lead_researcher_tools = [ConductResearch, ResearchComplete, think_tool]
     
     # Configure model with tools, retry logic, and model settings
-    research_model = (
-        configurable_model
-        .bind_tools(lead_researcher_tools)
-        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
-    )
-    
+    research_model = (  
+        init_google_model(configurable.research_model, **research_model_config)  
+        .bind_tools(lead_researcher_tools)  
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)  
+    ) 
+
     # Step 2: Generate supervisor response based on current context
     supervisor_messages = state.get("supervisor_messages", [])
     response = await research_model.ainvoke(supervisor_messages)
@@ -390,7 +385,6 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     
     # Step 2: Configure the researcher model with tools
     research_model_config = {
-        "model": configurable.research_model,
         "max_tokens": configurable.research_model_max_tokens,
         "api_key": get_api_key_for_model(configurable.research_model, config),
         "tags": ["langsmith:nostream"]
@@ -403,13 +397,12 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     )
     
     # Configure model with tools, retry logic, and settings
-    research_model = (
-        configurable_model
-        .bind_tools(tools)
-        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
-    )
-    
+    research_model = (  
+        init_google_model(configurable.research_model, **research_model_config)  
+        .bind_tools(tools)  
+        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)  
+    )    
+
     # Step 3: Generate researcher response with system context
     messages = [SystemMessage(content=researcher_prompt)] + researcher_messages
     response = await research_model.ainvoke(messages)
@@ -523,14 +516,20 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
         Dictionary containing compressed research summary and raw notes
     """
     # Step 1: Configure the compression model
-    configurable = Configuration.from_runnable_config(config)
-    synthesizer_model = configurable_model.with_config({
-        "model": configurable.compression_model,
-        "max_tokens": configurable.compression_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.compression_model, config),
-        "tags": ["langsmith:nostream"]
-    })
-    
+    configurable = Configuration.from_runnable_config(config)  
+      
+    # Create clean parameters without 'model' key  
+    compression_params = {  
+        "max_tokens": configurable.compression_model_max_tokens,  
+        "api_key": get_api_key_for_model(configurable.compression_model, config),  
+        "tags": ["langsmith:nostream"]  
+    }  
+      
+    synthesizer_model = init_google_model(  
+        configurable.compression_model,  
+        **compression_params  
+    )
+
     # Step 2: Prepare messages for compression
     researcher_messages = state.get("researcher_messages", [])
     
@@ -625,7 +624,6 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
     # Step 2: Configure the final report generation model
     configurable = Configuration.from_runnable_config(config)
     writer_model_config = {
-        "model": configurable.final_report_model,
         "max_tokens": configurable.final_report_model_max_tokens,
         "api_key": get_api_key_for_model(configurable.final_report_model, config),
         "tags": ["langsmith:nostream"]
@@ -647,8 +645,12 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
             )
             
             # Generate the final report
-            final_report = await configurable_model.with_config(writer_model_config).ainvoke([
-                HumanMessage(content=final_report_prompt)
+            final_report_model = init_google_model(  
+                configurable.final_report_model,  
+                **writer_model_config  
+            )  
+            final_report = await final_report_model.ainvoke([  
+                HumanMessage(content=final_report_prompt)  
             ])
             
             # Return successful report generation
