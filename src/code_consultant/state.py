@@ -1,4 +1,4 @@
-"""Graph state definitions and data structures for the Deep Research agent."""
+"""Graph state definitions and data structures for the Codebase Consulting agent."""
 
 import operator
 from typing import Annotated, Optional
@@ -12,17 +12,17 @@ from typing_extensions import TypedDict
 ###################
 # Structured Outputs
 ###################
-class ConductResearch(BaseModel):
-    """Call this tool to conduct research on a specific topic."""
-    research_topic: str = Field(
-        description="The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).",
+class ExecuteTask(BaseModel):
+    """Call this tool to execute a task on a specific topic."""
+    task_description: str = Field(
+        description="The task to execute. Should be a single task, and should be described in high detail (at least a paragraph).",
     )
 
-class ResearchComplete(BaseModel):
-    """Call this tool to indicate that the research is complete."""
+class TaskComplete(BaseModel):
+    """Call this tool to indicate that the task is complete."""
 
 class Summary(BaseModel):
-    """Research summary with key findings."""
+    """Analysis summary with key findings."""
     
     summary: str
     key_excerpts: str
@@ -34,17 +34,17 @@ class ClarifyWithUser(BaseModel):
         description="Whether the user needs to be asked a clarifying question.",
     )
     question: str = Field(
-        description="A question to ask the user to clarify the report scope",
+        description="A question to ask the user to clarify the task scope",
     )
     verification: str = Field(
-        description="Verify message that we will start research after the user has provided the necessary information.",
+        description="Verify message that we will start the task after the user has provided the necessary information.",
     )
 
-class ResearchQuestion(BaseModel):
-    """Research question and brief for guiding research."""
+class TaskBrief(BaseModel):
+    """Task description and brief for guiding the work."""
     
-    research_brief: str = Field(
-        description="A research question that will be used to guide the research.",
+    task_brief: str = Field(
+        description="A task description that will be used to guide the work.",
     )
 
 
@@ -63,34 +63,34 @@ class AgentInputState(MessagesState):
     """InputState is only 'messages'."""
 
 class AgentState(MessagesState):
-    """Main agent state containing messages and research data."""
+    """Main agent state containing messages and analysis data."""
     
     supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
-    research_brief: Optional[str]
+    task_brief: Optional[str]
     raw_notes: Annotated[list[str], override_reducer] = []
     notes: Annotated[list[str], override_reducer] = []
     final_report: str
 
 class SupervisorState(TypedDict):
-    """State for the supervisor that manages research tasks."""
+    """State for the supervisor that manages tasks."""
     
     supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
-    research_brief: str
+    task_brief: str
     notes: Annotated[list[str], override_reducer] = []
-    research_iterations: int = 0
+    iterations: int = 0
     raw_notes: Annotated[list[str], override_reducer] = []
 
-class ResearcherState(TypedDict):
-    """State for individual researchers conducting research."""
+class AnalystState(TypedDict):
+    """State for individual analysts conducting analysis."""
     
-    researcher_messages: Annotated[list[MessageLikeRepresentation], operator.add]
+    analyst_messages: Annotated[list[MessageLikeRepresentation], operator.add]
     tool_call_iterations: int = 0
-    research_topic: str
-    compressed_research: str
+    task_description: str
+    compressed_analysis: str
     raw_notes: Annotated[list[str], override_reducer] = []
 
-class ResearcherOutputState(BaseModel):
-    """Output state from individual researchers."""
+class AnalystOutputState(BaseModel):
+    """Output state from individual analysts."""
     
-    compressed_research: str
+    compressed_analysis: str
     raw_notes: Annotated[list[str], override_reducer] = []
