@@ -85,6 +85,7 @@ def extract_relevant_file_content(query: str) -> str:
 
     print(f"DEBUG: RELEVANT FILES: {[path for path, _ in relevant_files]}")
 
+    # Adding the relevant files to documents with metadata as the file path
     documents = []
     for file_path, content in relevant_files:
         documents.append(Document(
@@ -95,6 +96,7 @@ def extract_relevant_file_content(query: str) -> str:
     if not documents:
         return "No relevant file content found for the query."
 
+    # Split documents into chunks for embedding
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1024,
         chunk_overlap=200,
@@ -103,12 +105,14 @@ def extract_relevant_file_content(query: str) -> str:
 
     vectorstore = FAISS.from_documents(chunks, embeddings)
 
+    # Create a retriever from the vectorstore and perform similarity search and retrieve top 5 relevant chunks
     retriever = vectorstore.as_retriever(
         search_type="similarity",
         search_kwargs={"k": 5}
     )
     relevant_chunks = retriever.get_relevant_documents(query)
 
+    # Concatenate the content of the relevant chunks into a single string with source file paths
     result = []
     for i, chunk in enumerate(relevant_chunks):
         source = chunk.metadata.get('source', 'unknown')
@@ -124,7 +128,6 @@ def extract_relevant_file_content(query: str) -> str:
     print("RELEVANT_CONTENT: ", relevant_content)
 
     return relevant_content
-
 
 if __name__ == "__main__":
     app.run(transport="http", host="127.0.0.1", port=8080)
