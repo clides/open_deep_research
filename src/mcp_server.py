@@ -9,16 +9,30 @@ from fastmcp import FastMCP
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
-from langchain_ollama.embeddings import OllamaEmbeddings
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain_ollama import OllamaLLM
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
 app = FastMCP("Codebase Consulting Server")
+
+# Configure generative model
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 model = genai.GenerativeModel("gemini-2.5-flash")
+
+# Load the embedding model once at startup
+print("Loading embedding model...")
+embedding_model_name = "BAAI/bge-large-en-v1.5"
+embeddings = HuggingFaceEmbeddings(
+    model_name=embedding_model_name,
+    model_kwargs={'device': 'cuda'},
+    encode_kwargs={
+        'normalize_embeddings': True,
+        'batch_size': 64,
+    }
+)
+print("Embedding model loaded.")
+
 
 @app.tool()
 def extract_relevant_file_content(query: str) -> str:
@@ -41,23 +55,20 @@ def extract_relevant_file_content(query: str) -> str:
 
     print(f"DEBUG: Extracted keywords from query: {keywords}")
 
-    skipped_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.vscode', '.idea'}
+    skipped_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.vscode', '.idea', 'test_outputs', '.mypy_cache'}
     skipped_exts = {'.pyc', '.so', '.dll', '.exe', '.jpg', '.png', '.gif', '.pdf', '.zip', '.tar'}
 
     relevant_files = []
-    for root, _, files in os.walk("."):
+    for root, dirs, files in os.walk("."):
+        # Prune skipped directories
+        dirs[:] = [d for d in dirs if d not in skipped_dirs]
+        
         for f in files:
-            rel_path = os.path.relpath(os.path.join(root, f), ".")
-
             # Skip if file extension is in skipped extensions
-            if any(rel_path.endswith(ext) for ext in skipped_exts):
-                continue
-            
-            # Skip if any part of the path contains a skipped directory
-            path_parts = rel_path.split(os.sep)
-            if any(part in skipped_dirs for part in path_parts):
+            if any(f.endswith(ext) for ext in skipped_exts):
                 continue
 
+            rel_path = os.path.relpath(os.path.join(root, f), ".")
             try:
                 with open(rel_path, "r", encoding="utf-8", errors="ignore") as file:
                     content = file.read()
@@ -67,6 +78,8 @@ def extract_relevant_file_content(query: str) -> str:
             except Exception as e:
                 print(f"Error reading {rel_path}: {e}")
 
+    print(f"DEBUG: RELEVANT FILES: {[path for path, _ in relevant_files]}")
+
 
     documents = []
     for file_path, content in relevant_files:
@@ -75,23 +88,15 @@ def extract_relevant_file_content(query: str) -> str:
             metadata={"source": file_path}
         ))
 
+    if not documents:
+        return "No relevant file content found for the query."
+
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1024,
         chunk_overlap=200,
     )
     chunks = text_splitter.split_documents(documents)
 
-    # embeddings = OllamaEmbeddings(model='openhermes', base_url="http://localhost:11434")
-
-    model_name = "BAAI/bge-large-en-v1.5"
-    embeddings = HuggingFaceEmbeddings(
-        model_name=model_name,
-        model_kwargs={'device': 'cuda'},
-        encode_kwargs={
-            'normalize_embeddings': True, 
-            'batch_size': 32,  # Larger batch size for GPU
-        },
-    )
     vectorstore = FAISS.from_documents(chunks, embeddings)
 
     retriever = vectorstore.as_retriever(
@@ -111,8 +116,12 @@ def extract_relevant_file_content(query: str) -> str:
     if result and result[-1] == "":
         result.pop()
 
-    return "\n".join(result)
+    relevant_content = "\n".join(result)
+    print("RELEVANT_CONTENT: ", relevant_content)
+
+    return relevant_content
 
 
 if __name__ == "__main__":
     app.run(transport="http", host="127.0.0.1", port=8080)
+
