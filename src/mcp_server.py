@@ -59,27 +59,29 @@ def extract_relevant_file_content(query: str) -> str:
     skipped_exts = {'.pyc', '.so', '.dll', '.exe', '.jpg', '.png', '.gif', '.pdf', '.zip', '.tar'}
 
     relevant_files = []
-    for root, dirs, files in os.walk("."):
-        # Prune skipped directories
-        dirs[:] = [d for d in dirs if d not in skipped_dirs]
-        
+    for root, _, files in os.walk("."):
         for f in files:
+            rel_path = os.path.relpath(os.path.join(root, f), ".")
+
             # Skip if file extension is in skipped extensions
-            if any(f.endswith(ext) for ext in skipped_exts):
+            if any(rel_path.endswith(ext) for ext in skipped_exts):
+                continue
+            
+            # Skip if any part of the path contains a skipped directory
+            path_parts = rel_path.split(os.sep)
+            if any(part in skipped_dirs for part in path_parts):
                 continue
 
-            rel_path = os.path.relpath(os.path.join(root, f), ".")
             try:
                 with open(rel_path, "r", encoding="utf-8", errors="ignore") as file:
                     content = file.read()
-                # Check if any keyword is in filename or content
+
                 if any(kw.lower() in rel_path.lower() or kw.lower() in content.lower() for kw in keywords):
                     relevant_files.append((rel_path, content))
             except Exception as e:
                 print(f"Error reading {rel_path}: {e}")
 
     print(f"DEBUG: RELEVANT FILES: {[path for path, _ in relevant_files]}")
-
 
     documents = []
     for file_path, content in relevant_files:
