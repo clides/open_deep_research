@@ -91,7 +91,6 @@ def extract_relevant_file_content(query: str) -> str:
             'normalize_embeddings': True, 
             'batch_size': 32,  # Larger batch size for GPU
         },
-        show_progress_bar=True
     )
     vectorstore = FAISS.from_documents(chunks, embeddings)
 
