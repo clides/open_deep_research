@@ -10,6 +10,7 @@ import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
 from langchain_ollama.embeddings import OllamaEmbeddings
+from langchain.embeddings import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
@@ -80,7 +81,18 @@ def extract_relevant_file_content(query: str) -> str:
     )
     chunks = text_splitter.split_documents(documents)
 
-    embeddings = OllamaEmbeddings(model='openhermes', base_url="http://localhost:11434")
+    # embeddings = OllamaEmbeddings(model='openhermes', base_url="http://localhost:11434")
+
+    model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    embeddings = HuggingFaceEmbeddings(
+        model_name=model_name,
+        model_kwargs={'device': 'cuda'},
+        encode_kwargs={
+            'normalize_embeddings': True, 
+            'batch_size': 32,  # Larger batch size for GPU
+            'show_progress_bar': True
+        }
+    )
     vectorstore = FAISS.from_documents(chunks, embeddings)
 
     retriever = vectorstore.as_retriever(
