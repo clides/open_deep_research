@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 load_dotenv()
