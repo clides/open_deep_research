@@ -1,0 +1,10 @@
+Google AI Studio Integration Test - Full Report
+Timestamp: 2025-09-03T00:03:14.657763
+Query: What model is used in test_openrouter_integration file?
+Model: gemini-2.0-flash-lite
+================================================================================
+
+The `test_openrouter_integration.py` file uses the `openrouter:deepseek/deepseek-chat-v3-0324:free` model [1].
+
+### References
+[1] /Users/euclides/Documents/Programming/Projects/open_deep_research/src/test_openrouter_integration.py

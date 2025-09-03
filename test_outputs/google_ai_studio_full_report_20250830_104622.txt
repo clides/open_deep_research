@@ -1,0 +1,14 @@
+Google AI Studio Integration Test - Full Report
+Timestamp: 2025-08-30T10:46:22.741827
+Query: What query is used in test_openrouter_integration file?
+Model: gemini-2.0-flash-lite
+================================================================================
+
+The query used in the `test_openrouter_integration` file is:
+
+```
+What are the key benefits of renewable energy?
+```
+
+### References
+[1] /Users/euclides/Documents/Programming/Projects/open_deep_research/src/test_openrouter_integration.py

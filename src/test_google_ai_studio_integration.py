@@ -27,20 +27,18 @@ async def test_google_ai_studio_integration():
             "compression_model": "google:gemini-2.0-flash-lite",
             "final_report_model": "google:gemini-2.0-flash-lite",
             "summarization_model": "google:gemini-2.0-flash-lite",
-            # Research parameters - reduced for rate limiting
-            "max_structured_output_retries": 2,  # Reduced from 3
+            "max_structured_output_retries": 2,
             "allow_clarification": False,
-            "max_concurrent_tasks": 1,  # Reduced from 2 for rate limiting
-            "max_iterations": 1,  # Reduced from 2 for rate limiting
-            "max_react_tool_calls": 3,  # Reduced from 5 for rate limiting
-            # Token limits - conservative for rate limiting
-            "analyst_model_max_tokens": 1000000,  # Reduced from 4000
-            "compression_model_max_tokens": 1000000,  # Reduced from 4000
-            "final_report_model_max_tokens": 1000000,  # Reduced from 4000
-            "summarization_model_max_tokens": 1000000,  # Reduced from 2000
+            "max_concurrent_tasks": 1,
+            "max_iterations": 1,
+            "max_react_tool_calls": 3,
+            "analyst_model_max_tokens": 1000000,
+            "compression_model_max_tokens": 1000000,
+            "final_report_model_max_tokens": 1000000,
+            "summarization_model_max_tokens": 1000000,
             # mcp server config
             "mcp_config": {
-                "url": "http://localhost:8080",  # HTTP URL instead of stdio
+                "url": "http://localhost:8080", 
                 "tools": ["extract_relevant_file_content"],
                 "auth_required": False,
             },
@@ -61,7 +59,7 @@ async def test_google_ai_studio_integration():
     print(f"🔧 Total tools loaded: {len(tools)}")
 
     # Simple test query
-    test_query = "What query is used in test_openrouter_integration file?"
+    test_query = "What model is used in test_openrouter_integration file?"
 
     try:
         # Initialize the graph

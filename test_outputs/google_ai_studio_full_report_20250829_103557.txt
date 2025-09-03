@@ -1,0 +1,9 @@
+Google AI Studio Integration Test - Full Report
+Timestamp: 2025-08-29T10:35:57.681251
+Query: What query is used in test_openrouter_integration file?
+Model: gemini-2.0-flash-lite
+================================================================================
+
+I am unable to provide the specific query used in the `test_openrouter_integration` file because the `<Findings>` section is empty.
+### References
+[1] /path/to/test_openrouter_integration.py (Hypothetical, as no file path was provided)
