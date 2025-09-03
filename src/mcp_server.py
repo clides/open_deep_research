@@ -55,6 +55,8 @@ def extract_relevant_file_content(query: str) -> str:
 
     print(f"DEBUG: Extracted keywords from query: {keywords}")
 
+    keywords = 'test_openrouter_integration'
+
     skipped_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.vscode', '.idea', 'test_outputs', '.mypy_cache'}
     skipped_exts = {'.pyc', '.so', '.dll', '.exe', '.jpg', '.png', '.gif', '.pdf', '.zip', '.tar'}
 
