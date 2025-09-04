@@ -1,7 +1,6 @@
 """Test file for Google AI Studio integration with Gemini 2.0 Flash-Lite model."""
 
 import asyncio
-import json
 import os
 import uuid
 from datetime import datetime
@@ -43,7 +42,6 @@ async def test_google_ai_studio_integration():
                 "auth_required": False,
             },
             "mcp_prompt": """
-
 **CRITICAL FILE READING INSTRUCTIONS:**
 **FOR SUPERVISORS:** When asked about local files (like README, config files, etc.), you MUST delegate these tasks to analysts via ExecuteTask. The analysts have access to the `extract_relevant_file_content` tool. Do NOT refuse local file requests - delegate them!
 
